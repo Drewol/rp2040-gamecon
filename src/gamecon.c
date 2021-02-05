@@ -34,6 +34,15 @@
 void hid_task(void);
 const uint LED_PIN = 25;
 
+struct report
+{
+    uint16_t buttons;
+    uint8_t joy0;
+    uint8_t joy1;
+    uint8_t joy2;
+    uint8_t joy3;
+} report;
+
 int main(void)
 {
     gpio_init(LED_PIN);
@@ -51,18 +60,46 @@ int main(void)
     return 0;
 }
 
-struct report
-{
-    uint16_t buttons;
-    int8_t joy0;
-    int8_t joy1;
-    int8_t joy2;
-    int8_t joy3;
-} report;
+void con_panic(uint16_t errcode) {
+    report.buttons = errcode;
+    while(1)
+    {
+        tud_task(); // tinyusb device task
+        // Remote wakeup
+        if (tud_suspended())
+        {
+            // Wake up host if we are in suspend mode
+            // and REMOTE_WAKEUP feature is enabled by host
+            tud_remote_wakeup();
+        }
+
+        if (tud_hid_ready())
+        {
+            gpio_put(LED_PIN, report.buttons);
+            tud_hid_n_report(0x00, 0x01, &report, sizeof(report));
+        }
+    }
+}
+
+
+
+typedef struct {
+    uint8_t r,g,b;
+} RGB_t;
+
+
+union {
+  struct {
+    uint8_t buttons[16];
+    RGB_t rgb[3];
+  } lights;
+  uint8_t raw[25];
+} light_data;
+
 
 void hid_task(void)
 {
-    // Poll every 10ms
+    // Poll every 1ms
     const uint32_t interval_ms = 1;
     static uint32_t start_ms = 0;
 
@@ -71,10 +108,10 @@ void hid_task(void)
     start_ms += interval_ms;
 
     report.buttons = ((board_millis() / 1000) % 2) << ((board_millis() / 2000) % 16);
-    report.joy0 = board_millis();
-    report.joy1 = -board_millis() / 2;
-    report.joy2 = -board_millis() * 2;
-    report.joy3 = board_millis() / 3;
+    report.joy0 = light_data.lights.rgb[2].g;
+    report.joy1 = light_data.lights.rgb[2].b; 
+    report.joy2 = ((board_millis() / 1000) % 4) * 64;
+    report.joy3 = board_millis() / 2;
 
     // Remote wakeup
     if (tud_suspended())
@@ -86,7 +123,7 @@ void hid_task(void)
 
     if (tud_hid_ready())
     {
-        gpio_put(LED_PIN, report.buttons);
+        gpio_put(LED_PIN, light_data.lights.buttons[0] / 128);
         tud_hid_n_report(0x00, 0x01, &report, sizeof(report));
     }
 }
@@ -140,9 +177,13 @@ uint16_t tud_hid_get_report_cb(uint8_t report_id, hid_report_type_t report_type,
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
-    // This example doesn't use multiple report and report ID
-    (void)report_id;
-    (void)report_type;
+    if (report_id == 2 && report_type == HID_REPORT_TYPE_OUTPUT && buffer[0] == 2) //light data
+    {
+        size_t i = 0;
+        for(i; i < sizeof(light_data); i++) {
+            light_data.raw[i] = buffer[i + 1];
+        }
+    }
 
     // echo back anything we received from host
     tud_hid_report(0, buffer, bufsize);
