@@ -13,5 +13,5 @@ pico_sdk_init()
 add_executable(gamecon src/gamecon.c src/usb_descriptors.c)
 target_include_directories(gamecon PRIVATE include/)
 
-target_link_libraries(gamecon PRIVATE pico_stdlib tinyusb_device tinyusb_board)
+target_link_libraries(gamecon PRIVATE pico_stdlib tinyusb_device tinyusb_board hardware_pwm)
 pico_add_extra_outputs(gamecon)

@@ -30,9 +30,9 @@
 #include "bsp/board.h"
 #include "tusb.h"
 #include "pico/stdlib.h"
+#include "hardware/pwm.h"
 
 void hid_task(void);
-const uint LED_PIN = 25;
 
 struct report
 {
@@ -45,11 +45,23 @@ struct report
 
 int main(void)
 {
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
+
     board_init();
 
     tusb_init();
+
+    gpio_set_function(PICO_DEFAULT_LED_PIN, GPIO_FUNC_PWM);
+    uint slice_num = pwm_gpio_to_slice_num(PICO_DEFAULT_LED_PIN);
+
+    pwm_clear_irq(slice_num);
+    pwm_set_irq_enabled(slice_num, false);
+    // Get some sensible defaults for the slice configuration. By default, the
+    // counter is allowed to wrap over its maximum range (0 to 2**16-1)
+    pwm_config config = pwm_get_default_config();
+    // Set divider, reduces counter clock to sysclock/this value
+    pwm_config_set_clkdiv(&config, 1.f);
+    // Load the configuration into our PWM slice, and set it running.
+    pwm_init(slice_num, &config, true);
 
     while (1)
     {
@@ -60,9 +72,10 @@ int main(void)
     return 0;
 }
 
-void con_panic(uint16_t errcode) {
+void con_panic(uint16_t errcode)
+{
     report.buttons = errcode;
-    while(1)
+    while (1)
     {
         tud_task(); // tinyusb device task
         // Remote wakeup
@@ -75,27 +88,25 @@ void con_panic(uint16_t errcode) {
 
         if (tud_hid_ready())
         {
-            gpio_put(LED_PIN, report.buttons);
             tud_hid_n_report(0x00, 0x01, &report, sizeof(report));
         }
     }
 }
 
-
-
-typedef struct {
-    uint8_t r,g,b;
+typedef struct
+{
+    uint8_t r, g, b;
 } RGB_t;
 
-
-union {
-  struct {
-    uint8_t buttons[16];
-    RGB_t rgb[3];
-  } lights;
-  uint8_t raw[25];
+union
+{
+    struct
+    {
+        uint8_t buttons[16];
+        RGB_t rgb[3];
+    } lights;
+    uint8_t raw[25];
 } light_data;
-
 
 void hid_task(void)
 {
@@ -109,9 +120,11 @@ void hid_task(void)
 
     report.buttons = ((board_millis() / 1000) % 2) << ((board_millis() / 2000) % 16);
     report.joy0 = light_data.lights.rgb[2].g;
-    report.joy1 = light_data.lights.rgb[2].b; 
+    report.joy1 = light_data.lights.rgb[2].b;
     report.joy2 = ((board_millis() / 1000) % 4) * 64;
     report.joy3 = board_millis() / 2;
+    int fade = report.joy1;
+    pwm_set_gpio_level(PICO_DEFAULT_LED_PIN, fade * fade);
 
     // Remote wakeup
     if (tud_suspended())
@@ -123,7 +136,6 @@ void hid_task(void)
 
     if (tud_hid_ready())
     {
-        gpio_put(LED_PIN, light_data.lights.buttons[0] / 128);
         tud_hid_n_report(0x00, 0x01, &report, sizeof(report));
     }
 }
@@ -177,10 +189,11 @@ uint16_t tud_hid_get_report_cb(uint8_t report_id, hid_report_type_t report_type,
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize)
 {
-    if (report_id == 2 && report_type == HID_REPORT_TYPE_OUTPUT && buffer[0] == 2) //light data
+    if (report_id == 2 && report_type == HID_REPORT_TYPE_OUTPUT && buffer[0] == 2 && bufsize >= sizeof(light_data)) //light data
     {
         size_t i = 0;
-        for(i; i < sizeof(light_data); i++) {
+        for (i; i < sizeof(light_data); i++)
+        {
             light_data.raw[i] = buffer[i + 1];
         }
     }
